@@ -116,14 +116,13 @@ def plot_speed():
     print("[+] llm_vs_streaming_speed.png")
 
 
-# 3) per-utt CER scatter
-def plot_per_utt_scatter():
-    cmp_csv = RESULTS / "compare_aishell_qwen_vs_sherpa.csv"
-    if not cmp_csv.exists():
-        print("[!] skip scatter: compare csv missing")
+# 3) per-utt CER scatter — 两张：Qwen2-Audio vs sherpa, Omni vs sherpa
+def _scatter_pair(cmp_path: Path, label_y: str, color: str, out: Path):
+    if not cmp_path.exists():
+        print(f"[!] skip {out.name}: {cmp_path.name} missing")
         return
     qs, ss = [], []
-    with cmp_csv.open(encoding="utf-8") as f:
+    with cmp_path.open(encoding="utf-8") as f:
         r = csv.DictReader(f)
         for row in r:
             if not row["ref_norm"] or not row["sherpa_norm"]:
@@ -137,29 +136,40 @@ def plot_per_utt_scatter():
             ss.append(min(cer_s, 60))
     qs = np.array(qs); ss = np.array(ss)
     if len(qs) == 0:
-        print("[!] no scatter data")
         return
     fig, ax = plt.subplots(figsize=(6.5, 6.5))
-    ax.scatter(ss, qs, s=14, alpha=0.4, color="#444",
+    ax.scatter(ss, qs, s=14, alpha=0.4, color=color,
                edgecolor="white", linewidth=0.3)
     lim = 60
     ax.plot([0, lim], [0, lim], color="grey", linestyle="--", linewidth=1, label="y=x")
-    n_qwen_better = int((qs < ss).sum())
-    n_sherpa_better = int((ss < qs).sum())
+    n_better = int((qs < ss).sum())
+    n_worse = int((ss < qs).sum())
     n_tie = int((qs == ss).sum())
     ax.set_xlabel("sherpa-onnx CER per utt (%)")
-    ax.set_ylabel("Qwen2-Audio CER per utt (%)")
+    ax.set_ylabel(f"{label_y} CER per utt (%)")
     ax.set_xlim(-2, lim); ax.set_ylim(-2, lim)
     ax.set_aspect("equal")
     ax.grid(True, linestyle=":", alpha=0.4)
     ax.text(0.02, 0.98,
-            f"N={len(qs)}\nQwen better: {n_qwen_better}\nsherpa better: {n_sherpa_better}\ntie: {n_tie}",
+            f"N={len(qs)}\n{label_y} better: {n_better}\n"
+            f"sherpa better: {n_worse}\ntie: {n_tie}",
             transform=ax.transAxes, ha="left", va="top",
             bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#aaa"))
-    ax.set_title("Per-utterance CER  —  Qwen2-Audio vs sherpa-onnx (clipped at 60%)")
-    fig.savefig(PLOTS / "llm_vs_streaming_per_utt.png")
+    ax.set_title(f"Per-utterance CER  —  {label_y} vs sherpa-onnx (clipped at 60%)")
+    fig.savefig(out)
     plt.close(fig)
-    print("[+] llm_vs_streaming_per_utt.png")
+    print(f"[+] {out.name}")
+
+
+def plot_per_utt_scatter():
+    for cmp_name, label, color, out_name in [
+        ("compare_aishell_qwen2audio_vs_sherpa.csv", "Qwen2-Audio 4-bit", "#eb5757", "llm_vs_streaming_per_utt.png"),
+        ("compare_aishell_qwen_vs_sherpa.csv",      "Qwen2-Audio 4-bit", "#eb5757", "llm_vs_streaming_per_utt.png"),
+        ("compare_aishell_omni_vs_sherpa.csv",      "Qwen2.5-Omni 4-bit", "#27ae60", "llm_vs_streaming_per_utt_omni.png"),
+    ]:
+        cmp_path = RESULTS / cmp_name
+        if cmp_path.exists():
+            _scatter_pair(cmp_path, label, color, PLOTS / out_name)
 
 
 if __name__ == "__main__":

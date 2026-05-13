@@ -4,14 +4,14 @@
 
 ## TL;DR
 
-| 模型 | 参数 / VRAM | AISHELL CER | LibriSpeech WER | RTF | 流式 |
+| 模型 | 参数 / VRAM | AISHELL CER (same 500 utt) | LibriSpeech WER | RTF | 流式 |
 |---|---|---|---|---|---|
 | sherpa-onnx Zipformer (CPU) | 234M | 4.11% | 3.24% | **0.05** | ✅ true |
 | Qwen2-Audio-7B 4-bit (GPU) | 7B / 8.4G | 5.86% | — | 0.13 | ❌ |
-| **Qwen2.5-Omni-7B 4-bit (GPU)** | 7B / 7.7G | **1.64%** ⭐ | — | 0.27 | ❌ |
+| **Qwen2.5-Omni-7B 4-bit (GPU)** | 7B / 7.7G | **1.57%** ⭐ | — | 0.26 | ❌ |
 
-- **sherpa-onnx**：CPU 推理，RTF 0.05，**唯一真正流式**，CER 4.11%（论文 4.60%, 复现 −0.44）
-- **Qwen2.5-Omni**：把 AISHELL CER 从 4.11% → 1.64%（**降 60%**），但 RTF 高 5×，无法流式
+- **sherpa-onnx**：CPU 推理，RTF 0.05，**唯一真正流式**，CER 4.11%（论文 4.60%, 复现 −0.49）
+- **Qwen2.5-Omni**：把 AISHELL CER 从 4.11% → **1.57%（−62%）**，但 RTF 高 5×，无法流式
 - 8GB Blackwell 上**两套路线都能跑**，正面的 PyTorch+CUDA 12.8+bnb 4-bit 也完全没踩坑
 
 ![CER comparison](plots/llm_vs_streaming_cer.png)
@@ -220,9 +220,11 @@ ASRwin/
 
 | 模型 | CER | utt 数 | 备注 |
 |---|---|---|---|
-| sherpa-onnx Zipformer | **4.11%** | 500 | 全集 7176 也是 4.16% |
-| Qwen2-Audio 4-bit | 5.86% | 500 | 偶尔输出解释/翻译扣分 |
-| **Qwen2.5-Omni 4-bit** | **1.64%** ⭐ | 100 | **超越专用 ASR 60%** |
+| sherpa-onnx Zipformer | **4.11%** | same 500 | 全集 7176 也是 4.16% |
+| Qwen2-Audio 4-bit | 5.86% | same 500 | 偶尔输出解释/翻译扣分 |
+| **Qwen2.5-Omni 4-bit** | **1.57%** ⭐ | same 500 | **超越专用 ASR 62%** |
+
+![Per-utt Omni vs sherpa](plots/llm_vs_streaming_per_utt_omni.png)
 
 ![LLM vs streaming CER](plots/llm_vs_streaming_cer.png)
 
