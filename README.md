@@ -180,6 +180,7 @@ ASRwin/
 │   ├── bench_accuracy.py         ← LibriSpeech WER / AISHELL CER
 │   ├── demo_streaming.py         ← 彩色实时流式演示
 │   ├── make_plots.py             ← 生成 4 张图
+│   ├── qwen2_audio_infer.py      ← Qwen2-Audio-7B 4-bit ASR/QA 推理
 │   └── extract_aishell_test.sh   ← AISHELL test 20 speaker 解包
 ├── plots/                        ← README 引用的 PNG
 ├── results/                      ← 评测 CSV + 汇总 txt
@@ -189,12 +190,58 @@ ASRwin/
 
 `models/` 与 `data/` 加起来约 ~1.8 GB，按上述脚本下载即可。
 
-## 可扩展方向
+## 附加：端到端 Speech LLM (Qwen2-Audio-7B 4-bit)
+
+ASR 基线跑完后，又验证了在同一台 8GB Blackwell 上跑 **真正的语音大模型**。
+
+### 环境（与 sherpa-onnx 路线隔离的 `speechllm` conda env）
+- PyTorch 2.11.0 + cu128 (含 sm_120 kernel)
+- bitsandbytes 0.49.2 (sm_120 4-bit NF4 kernel)
+- transformers 5.8.1 (含 `Qwen2AudioForConditionalGeneration`)
+
+### 实测占用
+
+| 指标 | 数值 |
+|---|---|
+| 模型加载耗时 | 28 s |
+| VRAM 静态 | 5963 MiB |
+| **VRAM 峰值** | **8401 MiB** ← 略超 8GB，靠 shared memory 兜底未 OOM |
+| 生成速度 | **13–17 tok/s** |
+
+### ASR vs QA 模式对比 (同一条 10s 中英混合 wav)
+
+```
+sherpa-onnx Zipformer (CPU):
+  昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星期三
+
+Qwen2-Audio 4-bit (GPU) — ASR mode:
+  昨天是 monday , today is 周六 , the day after tomorrow 是星期三
+
+Qwen2-Audio 4-bit (GPU) — QA mode "这段音频在说什么？":
+  这段音频中，说话人用英语说了一句话：
+  "Yesterday was Monday, today is Tuesday, the day after tomorrow is Wednesday."
+  （昨天是星期一，今天是星期二，后天是星期三。）
+```
+
+值得注意：Qwen2-Audio 在 **QA 模式下用语义推理修正了自己 ASR 模式下的错误**（从"周六"改对为"Tuesday"，逻辑链 Monday → ? → 后天=Wednesday）。这是传统 ASR 做不到的。
+
+### 何时该用哪个？
+
+| 场景 | 推荐 |
+|---|---|
+| 大批量转写 / 实时字幕 / 边缘部署 | sherpa-onnx Zipformer (CPU, RTF 0.05) |
+| 语音问答 / 翻译 / 多语种混合理解 | Qwen2-Audio-7B 4-bit (GPU, 13 tok/s) |
+| 流式低延迟交互 | sherpa-onnx (端到端 ~1s) |
+| 语音内容理解+生成 | Qwen2-Audio QA mode |
+
+跑法：`python scripts/qwen2_audio_infer.py audio.wav --mode {asr,qa} [--question "..."]`
+
+## 其它可扩展方向
 
 - **更短 chunk**：测 `chunk-16-left-64` 变体的首字延迟，比 `left-128` 应更低
-- **GPU 推理**：换 `onnxruntime-gpu` 配 CUDA 12.8 EP，对照 CPU 速度增量
+- **sherpa-onnx GPU 推理**：换 `onnxruntime-gpu` 配 CUDA 12.8 EP，对照 CPU 速度增量
 - **FunASR Paraformer / WeNet U2++** 横向对比（本项目 paraformer 仓库在 hf-mirror 401，需备选源）
-- **端到端 speech LLM**：Qwen2-Audio-7B 4-bit 量化（8GB VRAM 边界，复现难度更高）
+- **Qwen2.5-Omni-7B**：支持音频/视频/文本输入 + 文本/语音输出，transformers 5.8 已含 (`Qwen2_5OmniForConditionalGeneration`)
 - **真实麦克风**：`sounddevice` 接 `OnlineRecognizer`（建议跑 Windows 原生 Python，WSL 麦克风转发烦）
 
 ## 致谢
