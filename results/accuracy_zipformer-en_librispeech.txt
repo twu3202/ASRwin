@@ -1,0 +1,6 @@
+=== zipformer-en on librispeech ===
+  utt count   : 2620
+  audio total : 19452.5s (5.40h)
+  decode time : 1056.3s
+  RTF         : 0.054
+  WER        : 3.24%

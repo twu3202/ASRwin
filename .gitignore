@@ -1,0 +1,24 @@
+# 大文件 - 通过脚本下载即可
+data/
+models/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.venv-win/
+
+# 结果 CSV (太大且可重新生成)；保留汇总 txt
+results/*.csv
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

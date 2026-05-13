@@ -1,0 +1,6 @@
+=== zipformer-bi on aishell ===
+  utt count   : 7176
+  audio total : 36108.9s (10.03h)
+  decode time : 1811.9s
+  RTF         : 0.050
+  CER        : 4.16%
