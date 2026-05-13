@@ -28,7 +28,8 @@ from transformers import (
 import jiwer
 
 ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIR = ROOT / "models" / "Qwen2-Audio-7B-Instruct"
+QWEN2_DIR = ROOT / "models" / "Qwen2-Audio-7B-Instruct"
+OMNI_DIR  = ROOT / "models" / "Qwen2.5-Omni-7B"
 WAV_ROOT = ROOT / "data" / "data_aishell" / "wav" / "test"
 TRANS_FILE = ROOT / "data" / "data_aishell" / "transcript" / "aishell_transcript_v0.8.txt"
 SHERPA_CSV = ROOT / "results" / "accuracy_zipformer-bi_aishell.csv"
@@ -42,20 +43,30 @@ def normalize_zh(s: str) -> str:
     return s.strip().lower()
 
 
-def build_model():
-    print(f"[*] loading Qwen2-Audio (4-bit) from {MODEL_DIR}")
-    proc = AutoProcessor.from_pretrained(str(MODEL_DIR))
+def build_model(which: str = "qwen2audio"):
     bnb_cfg = BitsAndBytesConfig(
         load_in_4bit=True, bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True,
     )
-    model = Qwen2AudioForConditionalGeneration.from_pretrained(
-        str(MODEL_DIR),
-        quantization_config=bnb_cfg,
-        device_map={"": 0},
-        torch_dtype=torch.float16,
-        max_memory={0: "7GiB"},
-    )
+    if which == "qwen2audio":
+        print(f"[*] loading Qwen2-Audio (4-bit) from {QWEN2_DIR}")
+        proc = AutoProcessor.from_pretrained(str(QWEN2_DIR))
+        model = Qwen2AudioForConditionalGeneration.from_pretrained(
+            str(QWEN2_DIR), quantization_config=bnb_cfg,
+            device_map={"": 0}, torch_dtype=torch.float16,
+            max_memory={0: "7GiB"},
+        )
+    elif which == "omni":
+        from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
+        print(f"[*] loading Qwen2.5-Omni (4-bit) from {OMNI_DIR}")
+        proc = Qwen2_5OmniProcessor.from_pretrained(str(OMNI_DIR))
+        model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
+            str(OMNI_DIR), quantization_config=bnb_cfg,
+            device_map={"": 0}, torch_dtype=torch.float16,
+            max_memory={0: "7GiB"},
+        )
+    else:
+        raise ValueError(which)
     model.eval()
     return proc, model
 
@@ -84,7 +95,9 @@ def load_sherpa_hyps():
 
 
 def gen_one(proc, model, audio_path: Path) -> tuple[str, float]:
-    audio, sr = librosa.load(str(audio_path), sr=proc.feature_extractor.sampling_rate)
+    sr_target = getattr(proc, "feature_extractor", None)
+    sr_target = sr_target.sampling_rate if sr_target is not None else 16000
+    audio, sr = librosa.load(str(audio_path), sr=sr_target)
     conversation = [
         {"role": "system", "content": "You are a Chinese speech recognition system. Output ONLY the transcription text in Simplified Chinese. No punctuation, no English, no explanation."},
         {"role": "user", "content": [
@@ -94,11 +107,18 @@ def gen_one(proc, model, audio_path: Path) -> tuple[str, float]:
     ]
     text = proc.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
     inputs = proc(text=text, audio=audio, sampling_rate=sr, return_tensors="pt", padding=True)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    inputs = {k: (v.to(model.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
     t0 = time.perf_counter()
     with torch.no_grad():
-        out = model.generate(**inputs, max_new_tokens=128, do_sample=False)
+        # Omni 需要 return_audio=False 才返回纯文本 tensor
+        try:
+            out = model.generate(**inputs, max_new_tokens=128, do_sample=False,
+                                 return_audio=False)
+        except TypeError:
+            out = model.generate(**inputs, max_new_tokens=128, do_sample=False)
     elapsed = time.perf_counter() - t0
+    if isinstance(out, tuple):
+        out = out[0]
     gen_ids = out[:, inputs["input_ids"].shape[1]:]
     response = proc.batch_decode(gen_ids, skip_special_tokens=True)[0].strip()
     return response, elapsed
@@ -108,7 +128,10 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--n", type=int, default=500, help="抽样大小")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--model", choices=["qwen2audio", "omni"], default="qwen2audio")
+    p.add_argument("--tag", default=None, help="结果文件后缀 (默认 = --model)")
     args = p.parse_args()
+    tag = args.tag or args.model
 
     trans = load_transcripts()
     sherpa = load_sherpa_hyps()
@@ -121,12 +144,12 @@ def main():
     sample.sort(key=lambda p: p.stem)  # 排序便于断点续跑
     print(f"[*] 采样 {len(sample)} 条 (seed={args.seed})")
 
-    proc, model = build_model()
+    proc, model = build_model(args.model)
 
     out_dir = ROOT / "results"
     out_dir.mkdir(exist_ok=True)
-    csv_path = out_dir / "accuracy_qwen2audio_aishell.csv"
-    cmp_path = out_dir / "compare_aishell_qwen_vs_sherpa.csv"
+    csv_path = out_dir / f"accuracy_{tag}_aishell.csv"
+    cmp_path = out_dir / f"compare_aishell_{tag}_vs_sherpa.csv"
 
     refs, hyps_q, hyps_s = [], [], []
     audio_total = 0.0
@@ -175,12 +198,13 @@ def main():
                 fcsv.flush(); fcmp.flush()
 
     cer_q = jiwer.cer(refs, hyps_q) * 100
-    line_q = f"Qwen2-Audio 4-bit  CER = {cer_q:.2f}%  on {len(refs)} utt"
+    model_label = {"qwen2audio": "Qwen2-Audio 4-bit", "omni": "Qwen2.5-Omni 4-bit"}[args.model]
+    line_q = f"{model_label}  CER = {cer_q:.2f}%  on {len(refs)} utt"
     print("\n" + "="*60)
     print(line_q)
+    line_cmp = ""
     if hyps_s:
         # 严格 same-utt 对照：从 hyps_q/refs 中匹配 sherpa 的 utt
-        # 上面 hyps_s 已经只在 sherpa_n 非空时加入。但顺序可能错位，重新对齐
         aligned_refs, aligned_q, aligned_s = [], [], []
         with cmp_path.open(encoding="utf-8") as f:
             r = csv.DictReader(f)
@@ -194,7 +218,7 @@ def main():
             cer_s_match = jiwer.cer(aligned_refs, aligned_s) * 100
             line_cmp = (
                 f"On same {len(aligned_refs)} utt with sherpa hyps available:\n"
-                f"  Qwen2-Audio 4-bit CER : {cer_q_match:.2f}%\n"
+                f"  {model_label} CER  : {cer_q_match:.2f}%\n"
                 f"  sherpa-onnx Zipformer : {cer_s_match:.2f}%"
             )
             print(line_cmp)
@@ -203,15 +227,15 @@ def main():
 
     rtf = gen_total / audio_total if audio_total else 0
     summary = (
-        f"=== Qwen2-Audio 4-bit on AISHELL-1 test (subset N={len(refs)}) ===\n"
+        f"=== {model_label} on AISHELL-1 test (subset N={len(refs)}) ===\n"
         f"  audio total : {audio_total:.1f}s ({audio_total/3600:.2f}h)\n"
         f"  gen total   : {gen_total:.1f}s\n"
         f"  RTF         : {rtf:.3f}\n"
         f"  {line_q}\n"
     )
-    if hyps_s:
+    if line_cmp:
         summary += "\n" + line_cmp + "\n"
-    (out_dir / "accuracy_qwen2audio_aishell.txt").write_text(summary, encoding="utf-8")
+    (out_dir / f"accuracy_{tag}_aishell.txt").write_text(summary, encoding="utf-8")
     print(f"\n[+] CSV: {csv_path}")
     print(f"[+] CMP: {cmp_path}")
 

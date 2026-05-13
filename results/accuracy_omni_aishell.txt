@@ -1,0 +1,9 @@
+=== Qwen2.5-Omni 4-bit on AISHELL-1 test (subset N=100) ===
+  audio total : 489.4s (0.14h)
+  gen total   : 129.7s
+  RTF         : 0.265
+  Qwen2.5-Omni 4-bit  CER = 1.64%  on 100 utt
+
+On same 100 utt with sherpa hyps available:
+  Qwen2.5-Omni 4-bit CER  : 1.64%
+  sherpa-onnx Zipformer : 4.46%

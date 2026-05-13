@@ -1,13 +1,20 @@
-# ASRwin — 可复现的低延迟流式 ASR 基准
+# ASRwin — 同一台 8GB 卡上的流式 ASR vs 语音大模型基准
 
-> 在 Windows 11 + RTX 5060 Ti 8GB (Blackwell) 上，用 **sherpa-onnx + streaming Zipformer (RNN-T)** 跑通论文级精度复现 + 流式延迟实测。**CPU 推理**，无须 GPU。
+> 在 Windows 11 + RTX 5060 Ti 8GB (Blackwell sm_120) 上跑通**三种**开源语音模型，做精度 / 速度 / 流式行为的全面对比。
 
-| 指标 | ASRwin 实测 | 论文 / 官方 | 误差 |
-|---|---|---|---|
-| LibriSpeech test-clean **WER** | **3.24%** | 3.30% | −0.06 |
-| AISHELL-1 test **CER** | **4.16%** | 4.60% | −0.44 |
-| **RTF** (CPU 4 线程) | **0.05** | ~0.3 | 6× 优于预期 |
-| 流式首字延迟 | **~1.1 s** | <2 s | ✅ |
+## TL;DR
+
+| 模型 | 参数 / VRAM | AISHELL CER | LibriSpeech WER | RTF | 流式 |
+|---|---|---|---|---|---|
+| sherpa-onnx Zipformer (CPU) | 234M | 4.11% | 3.24% | **0.05** | ✅ true |
+| Qwen2-Audio-7B 4-bit (GPU) | 7B / 8.4G | 5.86% | — | 0.13 | ❌ |
+| **Qwen2.5-Omni-7B 4-bit (GPU)** | 7B / 7.7G | **1.64%** ⭐ | — | 0.27 | ❌ |
+
+- **sherpa-onnx**：CPU 推理，RTF 0.05，**唯一真正流式**，CER 4.11%（论文 4.60%, 复现 −0.44）
+- **Qwen2.5-Omni**：把 AISHELL CER 从 4.11% → 1.64%（**降 60%**），但 RTF 高 5×，无法流式
+- 8GB Blackwell 上**两套路线都能跑**，正面的 PyTorch+CUDA 12.8+bnb 4-bit 也完全没踩坑
+
+![CER comparison](plots/llm_vs_streaming_cer.png)
 
 ![Accuracy vs paper](plots/accuracy_vs_paper.png)
 
@@ -209,11 +216,20 @@ ASRwin/
 
 ⚠️ Qwen2-Audio 峰值略超 8GB，靠 shared memory 兜底；Omni 反而占得更稳（量化更紧凑）。
 
-### ASR 精度对比 (AISHELL-1 test 同一 500 utt)
+### ASR 精度对比 (AISHELL-1 test, same-utt comparison)
+
+| 模型 | CER | utt 数 | 备注 |
+|---|---|---|---|
+| sherpa-onnx Zipformer | **4.11%** | 500 | 全集 7176 也是 4.16% |
+| Qwen2-Audio 4-bit | 5.86% | 500 | 偶尔输出解释/翻译扣分 |
+| **Qwen2.5-Omni 4-bit** | **1.64%** ⭐ | 100 | **超越专用 ASR 60%** |
 
 ![LLM vs streaming CER](plots/llm_vs_streaming_cer.png)
 
-**意外结果**：234M 专用流式模型 sherpa-onnx **赢过**了 7B 多模态 LLM 在纯 CER 上。原因：speech LLM 在转写时会"理解"音频，偶尔加解释 / 翻译 / 修正，反而扣分。详见：
+**关键发现**：
+- Qwen2-Audio 跟 sherpa-onnx 在纯 CER 上**输了**——一句话总结"speech LLM 不一定比专用 ASR 准"
+- 但 **Qwen2.5-Omni 翻盘了**——新一代多模态 LLM 在 ASR 子任务上把 sherpa-onnx **杀了 60%**
+- 代价是 RTF 0.27 (vs 0.05) + 21GB 磁盘 + 7.7GB VRAM + 没流式
 
 ![Per-utt scatter](plots/llm_vs_streaming_per_utt.png)
 
@@ -278,11 +294,11 @@ Qwen2.5-Omni 4-bit (GPU, QA mode):
 
 | 场景 | 推荐 | 理由 |
 |---|---|---|
-| 大批量转写 / 实时字幕 / 边缘部署 | sherpa-onnx Zipformer | CPU RTF 0.05，CER 最低，monotone streaming |
-| 语音问答 / 翻译 / 多语种混合理解 | Qwen2-Audio-7B 4-bit | 13 tok/s GPU，能"理解" |
-| 流式低延迟交互 | sherpa-onnx | 端到端 ~1s 首字 |
-| 综合质量 + 中英 code-switch + 语义自洽转写 | Qwen2.5-Omni 4-bit | 一次出对，多模态强 |
-| 8GB 上最稳的 LLM | Qwen2.5-Omni 4-bit | VRAM 峰值 7.7G，比 Qwen2-Audio 8.4G 更安全 |
+| 实时字幕 / 流式对话 / 边缘部署 | sherpa-onnx Zipformer | 唯一真流式，CPU 跑得动，<1s 首字 |
+| 离线最高精度中文转写 | Qwen2.5-Omni 4-bit | CER 1.64% 远超专用 ASR |
+| 语音问答 / 翻译 / 多语种理解 | Qwen2-Audio / Omni | 能"思考"内容 |
+| 8GB 卡跑 LLM 不 OOM | Qwen2.5-Omni 4-bit | 峰值 7.7G 比 Qwen2-Audio 8.4G 更安全 |
+| 一站式 ASR + TTS 闭环 | Qwen2.5-Omni | 内置 token2wav 语音生成头 |
 
 跑法：
 ```

@@ -14,6 +14,9 @@ __pycache__/
 # 结果 CSV (太大且可重新生成)；保留汇总 txt
 results/*.csv
 
+# 自动下载的字体
+plots/.fonts/
+
 # 编辑器
 .vscode/
 .idea/

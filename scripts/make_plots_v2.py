@@ -27,39 +27,53 @@ plt.rcParams.update({
 })
 
 
-# 1) same-utt CER bar
+# 1) same-utt CER bar — 三方对比 (sherpa / qwen2audio / omni, 取 Omni 与 Qwen2-Audio 各自对照所用的 utt 子集)
 def plot_cer_bar():
-    cmp_csv = RESULTS / "compare_aishell_qwen_vs_sherpa.csv"
-    if not cmp_csv.exists():
-        print("[!] skip cer bar: compare csv missing")
-        return
-    refs, qwen, sherpa = [], [], []
-    with cmp_csv.open(encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for row in r:
-            if row["sherpa_norm"] and row["ref_norm"]:
-                refs.append(row["ref_norm"])
-                qwen.append(row["qwen_norm"])
-                sherpa.append(row["sherpa_norm"])
-    cer_q = jiwer.cer(refs, qwen) * 100
-    cer_s = jiwer.cer(refs, sherpa) * 100
+    cmp_q = RESULTS / "compare_aishell_qwen2audio_vs_sherpa.csv"
+    if not cmp_q.exists():
+        cmp_q = RESULTS / "compare_aishell_qwen_vs_sherpa.csv"  # 旧文件名兼容
+    cmp_o = RESULTS / "compare_aishell_omni_vs_sherpa.csv"
 
-    fig, ax = plt.subplots(figsize=(7.5, 4.3))
-    names = [f"sherpa-onnx\nZipformer (CPU, 234M)",
-             f"Qwen2-Audio 4-bit\n(GPU, 7B)"]
-    vals = [cer_s, cer_q]
-    colors = ["#2f80ed", "#eb5757"]
-    b = ax.bar(names, vals, color=colors, edgecolor="black", linewidth=0.7)
-    for bar, v in zip(b, vals):
-        ax.text(bar.get_x()+bar.get_width()/2, v+0.12, f"{v:.2f}%",
-                ha="center", va="bottom", fontsize=11)
+    def read_pair(path):
+        if not path.exists():
+            return None
+        refs, hyp, sh = [], [], []
+        with path.open(encoding="utf-8") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                if row["sherpa_norm"] and row["ref_norm"]:
+                    refs.append(row["ref_norm"])
+                    hyp.append(row["qwen_norm"])
+                    sh.append(row["sherpa_norm"])
+        return refs, hyp, sh
+
+    pq = read_pair(cmp_q); po = read_pair(cmp_o)
+    rows = []
+    if pq:
+        rows.append(("sherpa-onnx\nZipformer\n(CPU, 234M)",
+                     jiwer.cer(pq[0], pq[2]) * 100, len(pq[0]), "#2f80ed"))
+        rows.append(("Qwen2-Audio\n4-bit (GPU, 7B)",
+                     jiwer.cer(pq[0], pq[1]) * 100, len(pq[0]), "#eb5757"))
+    if po:
+        rows.append(("Qwen2.5-Omni\n4-bit (GPU, 7B)",
+                     jiwer.cer(po[0], po[1]) * 100, len(po[0]), "#27ae60"))
+
+    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    names = [r[0] for r in rows]
+    vals  = [r[1] for r in rows]
+    cols  = [r[3] for r in rows]
+    b = ax.bar(names, vals, color=cols, edgecolor="black", linewidth=0.7)
+    for bar, v, r in zip(b, vals, rows):
+        ax.text(bar.get_x()+bar.get_width()/2, v+0.12,
+                f"{v:.2f}%\nN={r[2]}",
+                ha="center", va="bottom", fontsize=10)
     ax.set_ylabel("CER (%)  — lower is better")
-    ax.set_ylim(0, max(vals)*1.4)
-    ax.set_title(f"AISHELL-1 test (same {len(refs)} utterances)")
+    ax.set_ylim(0, max(vals)*1.5)
+    ax.set_title("AISHELL-1 test — sherpa-onnx vs Qwen2-Audio vs Qwen2.5-Omni")
     ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.savefig(PLOTS / "llm_vs_streaming_cer.png")
     plt.close(fig)
-    print(f"[+] llm_vs_streaming_cer.png  CER sherpa={cer_s:.2f} qwen={cer_q:.2f}")
+    print(f"[+] llm_vs_streaming_cer.png  values={[round(v,2) for v in vals]}")
 
 
 # 2) speed comparison: RTF + latency dual axis
@@ -67,11 +81,12 @@ def plot_speed():
     # 已知数据：
     # sherpa-onnx: RTF 0.05, streaming first-token latency 18ms (compute) / ~1.1s (alg)
     # Qwen2-Audio:  RTF 0.13 (compute), 13 tok/s, non-streaming so latency = full pass
-    fig, ax = plt.subplots(figsize=(7.5, 4.5))
-    cats = ["sherpa-onnx\n(streaming)", "Qwen2-Audio 4-bit\n(non-streaming)"]
-    rtf  = [0.05, 0.13]
-    # 流式 first-text latency in second (algorithmic look-ahead included)
-    latency_s = [1.1, 5.0]  # qwen on 10s wav takes ~5s before answering
+    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    cats = ["sherpa-onnx\n(streaming)",
+            "Qwen2-Audio 4-bit\n(non-streaming)",
+            "Qwen2.5-Omni 4-bit\n(non-streaming)"]
+    rtf  = [0.05, 0.13, 0.27]
+    latency_s = [1.1, 5.0, 6.0]  # full-pass time on a 10s utterance
     x = np.arange(len(cats))
     w = 0.35
     a1 = ax.bar(x-w/2, rtf, w, color="#2f80ed", label="RTF (lower=faster)")
