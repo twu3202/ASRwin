@@ -1,0 +1,9 @@
+=== Qwen2-Audio 4-bit on AISHELL-1 test (subset N=500) ===
+  audio total : 2477.9s (0.69h)
+  gen total   : 311.6s
+  RTF         : 0.126
+  Qwen2-Audio 4-bit  CER = 5.86%  on 500 utt
+
+On same 500 utt with sherpa hyps available:
+  Qwen2-Audio 4-bit CER : 5.86%
+  sherpa-onnx Zipformer : 4.11%

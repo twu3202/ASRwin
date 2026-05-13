@@ -1,0 +1,132 @@
+{
+  "wav": "0.wav",
+  "audio_sec": 10.053125,
+  "checkpoints": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.0,
+    9.0,
+    10.0
+  ],
+  "qwen": [
+    {
+      "audio_t": 1.0,
+      "gen_sec": 2.5812340379998204,
+      "hyp": "The transcription of the audio is: '昨天'."
+    },
+    {
+      "audio_t": 2.0,
+      "gen_sec": 3.6800535030015453,
+      "hyp": "The transcription of the audio is: '昨天是周一'."
+    },
+    {
+      "audio_t": 3.0,
+      "gen_sec": 4.815862229999766,
+      "hyp": "The original content of this audio is: '昨天是 monday'"
+    },
+    {
+      "audio_t": 4.0,
+      "gen_sec": 0.801739421000093,
+      "hyp": "The original content of this audio is: '昨天是周一'"
+    },
+    {
+      "audio_t": 5.0,
+      "gen_sec": 1.0113338099981775,
+      "hyp": "The original content of this audio is: 'Yesterday was Monday, today is.'"
+    },
+    {
+      "audio_t": 6.0,
+      "gen_sec": 0.9796466220032016,
+      "hyp": "The original content of this audio is: '昨天是 monday , today is friday'"
+    },
+    {
+      "audio_t": 7.0,
+      "gen_sec": 1.1501847580002504,
+      "hyp": "The original content of this audio is: '昨天是 monday , today is friday ah the day.'"
+    },
+    {
+      "audio_t": 8.0,
+      "gen_sec": 1.1976603639996029,
+      "hyp": "The original content of this audio is:'昨天是 monday , today is friday the day after tomorrow.'"
+    },
+    {
+      "audio_t": 9.0,
+      "gen_sec": 1.338575376998051,
+      "hyp": "The original content of this audio is: '昨天是 monday , today is wednesday the day after tomorrow is thursday.'"
+    },
+    {
+      "audio_t": 10.0,
+      "gen_sec": 1.4816797649982618,
+      "hyp": "The original content of this audio is: '昨天是 monday , today is 周六, the day after tomorrow 是星期三'"
+    },
+    {
+      "audio_t": 10.053125,
+      "gen_sec": 1.6298250299987558,
+      "hyp": "The original content of this audio is: '昨天是 monday , today is 周六, the day after tomorrow 是星期三'",
+      "kind": "final"
+    }
+  ],
+  "sherpa": [
+    {
+      "audio_t": 1.0,
+      "wall_t": 1.0003039449984499,
+      "hyp": ""
+    },
+    {
+      "audio_t": 2.0,
+      "wall_t": 2.0003021150005225,
+      "hyp": "昨天是"
+    },
+    {
+      "audio_t": 3.0,
+      "wall_t": 3.016998215000058,
+      "hyp": "昨天是 MONDAY"
+    },
+    {
+      "audio_t": 4.0,
+      "wall_t": 4.021821528000146,
+      "hyp": "昨天是 MONDAY"
+    },
+    {
+      "audio_t": 5.0,
+      "wall_t": 5.0002328289992874,
+      "hyp": "昨天是 MONDAY TODAY"
+    },
+    {
+      "audio_t": 6.0,
+      "wall_t": 6.0003221970000595,
+      "hyp": "昨天是 MONDAY TODAY IS LI"
+    },
+    {
+      "audio_t": 7.0,
+      "wall_t": 7.000275053000223,
+      "hyp": "昨天是 MONDAY TODAY IS LIBR"
+    },
+    {
+      "audio_t": 8.0,
+      "wall_t": 8.000329185997543,
+      "hyp": "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER"
+    },
+    {
+      "audio_t": 9.0,
+      "wall_t": 9.00020577399846,
+      "hyp": "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW"
+    },
+    {
+      "audio_t": 10.0,
+      "wall_t": 10.000244102000579,
+      "hyp": "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星"
+    },
+    {
+      "audio_t": 10.053125,
+      "wall_t": 10.08862465600032,
+      "hyp": "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星期三",
+      "kind": "final"
+    }
+  ]
+}

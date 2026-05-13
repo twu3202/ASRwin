@@ -181,6 +181,11 @@ ASRwin/
 │   ├── demo_streaming.py         ← 彩色实时流式演示
 │   ├── make_plots.py             ← 生成 4 张图
 │   ├── qwen2_audio_infer.py      ← Qwen2-Audio-7B 4-bit ASR/QA 推理
+│   ├── qwen25_omni_infer.py      ← Qwen2.5-Omni-7B 4-bit ASR/QA 推理
+│   ├── bench_qwen_aishell.py     ← Qwen2-Audio 在 AISHELL 子集上的 CER
+│   ├── streaming_compare.py      ← Task C: growing-window vs streaming
+│   ├── replot_streaming.py       ← 重画 streaming 图 (含 CJK 字体)
+│   ├── make_plots_v2.py          ← speech LLM vs streaming 对比 plots
 │   └── extract_aishell_test.sh   ← AISHELL test 20 speaker 解包
 ├── plots/                        ← README 引用的 PNG
 ├── results/                      ← 评测 CSV + 汇总 txt
@@ -190,51 +195,101 @@ ASRwin/
 
 `models/` 与 `data/` 加起来约 ~1.8 GB，按上述脚本下载即可。
 
-## 附加：端到端 Speech LLM (Qwen2-Audio-7B 4-bit)
+## 附加：Speech LLM (Qwen2-Audio + Qwen2.5-Omni) vs 流式 ASR 全面对比
 
-ASR 基线跑完后，又验证了在同一台 8GB Blackwell 上跑 **真正的语音大模型**。
+在同一台 8GB Blackwell 上同时跑通三种语音模型，做了 **CER 对比 / 速度对比 / 流式行为对比** 三组实验。
 
-### 环境（与 sherpa-onnx 路线隔离的 `speechllm` conda env）
-- PyTorch 2.11.0 + cu128 (含 sm_120 kernel)
-- bitsandbytes 0.49.2 (sm_120 4-bit NF4 kernel)
-- transformers 5.8.1 (含 `Qwen2AudioForConditionalGeneration`)
+### 实测占用对照（同一张 RTX 5060 Ti 8GB）
 
-### 实测占用
+| 模型 | 大小 | VRAM 静态 | VRAM 峰值 | 推理速度 | 加载时间 |
+|---|---|---|---|---|---|
+| sherpa-onnx Zipformer | 234M | — (CPU) | — | RTF 0.05 (20× 实时) | 2.8 s |
+| Qwen2-Audio-7B 4-bit | 7B → 4-bit | 5963 MiB | 8401 MiB ⚠️ | 13–17 tok/s | 28 s |
+| Qwen2.5-Omni-7B 4-bit | 7B → 4-bit | 6534 MiB | 7707 MiB | 5.9 tok/s | 42 s |
 
-| 指标 | 数值 |
-|---|---|
-| 模型加载耗时 | 28 s |
-| VRAM 静态 | 5963 MiB |
-| **VRAM 峰值** | **8401 MiB** ← 略超 8GB，靠 shared memory 兜底未 OOM |
-| 生成速度 | **13–17 tok/s** |
+⚠️ Qwen2-Audio 峰值略超 8GB，靠 shared memory 兜底；Omni 反而占得更稳（量化更紧凑）。
 
-### ASR vs QA 模式对比 (同一条 10s 中英混合 wav)
+### ASR 精度对比 (AISHELL-1 test 同一 500 utt)
+
+![LLM vs streaming CER](plots/llm_vs_streaming_cer.png)
+
+**意外结果**：234M 专用流式模型 sherpa-onnx **赢过**了 7B 多模态 LLM 在纯 CER 上。原因：speech LLM 在转写时会"理解"音频，偶尔加解释 / 翻译 / 修正，反而扣分。详见：
+
+![Per-utt scatter](plots/llm_vs_streaming_per_utt.png)
+
+scatter 显示绝大多数句子两者都≈0%，差异集中在少数 hard case 上。
+
+### 速度 / 延迟对比 (10s 音频)
+
+![Speed comparison](plots/llm_vs_streaming_speed.png)
+
+sherpa-onnx 流式：首字 ~1.1 s（含算法 look-ahead），后续每字 ~10ms 间隔。
+Qwen2-Audio 非流式：必须等全段音频喂完再 forward，10s 音频要再等 ~5s 才有结果。
+
+### 三种模型在同一条 0.wav 上的输出
 
 ```
-sherpa-onnx Zipformer (CPU):
+sherpa-onnx Zipformer (CPU streaming):
   昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星期三
 
-Qwen2-Audio 4-bit (GPU) — ASR mode:
+Qwen2-Audio 4-bit (GPU, ASR mode):
   昨天是 monday , today is 周六 , the day after tomorrow 是星期三
 
-Qwen2-Audio 4-bit (GPU) — QA mode "这段音频在说什么？":
+Qwen2-Audio 4-bit (GPU, QA mode "这段在说什么？"):
   这段音频中，说话人用英语说了一句话：
   "Yesterday was Monday, today is Tuesday, the day after tomorrow is Wednesday."
-  （昨天是星期一，今天是星期二，后天是星期三。）
+
+Qwen2.5-Omni 4-bit (GPU, ASR mode):  ← 综合最佳
+  昨天是Monday，today is礼拜二，the day after tomorrow是星期三。
+
+Qwen2.5-Omni 4-bit (GPU, QA mode):
+  这段音频在解释日期，使用了普通话。说话人想教的是日期的计算，
+  具体是昨天是星期一，今天是星期二，后天是星期三。
 ```
 
-值得注意：Qwen2-Audio 在 **QA 模式下用语义推理修正了自己 ASR 模式下的错误**（从"周六"改对为"Tuesday"，逻辑链 Monday → ? → 后天=Wednesday）。这是传统 ASR 做不到的。
+观察：
+- sherpa 输出 "LIBR" 是音素错乱（无意义）
+- Qwen2-Audio ASR 给 "周六"（Saturday）— 跟上下文不符
+- Qwen2-Audio QA 用语义推理修对为 "Tuesday"
+- **Qwen2.5-Omni ASR 直接一次出对**："礼拜二"（口语 Tuesday）+ 保留中英 code-switch
+- Omni QA 进一步抽象出"在解释日期"的意图
+
+### Streaming behaviour 对比 (Task C — growing window 模拟)
+
+![Streaming compare](plots/streaming_compare_0.png)
+
+把同一段音频按 1s 步长切片，分别让两边出 partial hypothesis：
+
+| Audio time | sherpa-onnx (true streaming) | Qwen2-Audio (growing window) |
+|---|---|---|
+| 1s | "昨" | "昨天" |
+| 3s | "昨天是 MO" | "昨天是 monday" |
+| 5s | "昨天是 MONDAY TODAY" | "Yesterday was Monday, today is." ← 跳英文 |
+| 7s | "...IS LIBR" | "...today is friday ah the day." ← friday |
+| 9s | "...DAY AFTER TOMORROW" | "...today is wednesday the day after tomorrow is thursday." ← wednesday 又跳 |
+| 10s | "...是星期三" final | "...today is 周六, the day after tomorrow 是星期三" |
+
+**结论**：
+- sherpa-onnx 输出**单调增长**（已出 token 不变），适合做实时字幕
+- Qwen2-Audio growing-window **每次重生成**，输出在不同语言、不同日期之间跳来跳去
+- LLM 路线不适合做真流式 ASR
 
 ### 何时该用哪个？
 
-| 场景 | 推荐 |
-|---|---|
-| 大批量转写 / 实时字幕 / 边缘部署 | sherpa-onnx Zipformer (CPU, RTF 0.05) |
-| 语音问答 / 翻译 / 多语种混合理解 | Qwen2-Audio-7B 4-bit (GPU, 13 tok/s) |
-| 流式低延迟交互 | sherpa-onnx (端到端 ~1s) |
-| 语音内容理解+生成 | Qwen2-Audio QA mode |
+| 场景 | 推荐 | 理由 |
+|---|---|---|
+| 大批量转写 / 实时字幕 / 边缘部署 | sherpa-onnx Zipformer | CPU RTF 0.05，CER 最低，monotone streaming |
+| 语音问答 / 翻译 / 多语种混合理解 | Qwen2-Audio-7B 4-bit | 13 tok/s GPU，能"理解" |
+| 流式低延迟交互 | sherpa-onnx | 端到端 ~1s 首字 |
+| 综合质量 + 中英 code-switch + 语义自洽转写 | Qwen2.5-Omni 4-bit | 一次出对，多模态强 |
+| 8GB 上最稳的 LLM | Qwen2.5-Omni 4-bit | VRAM 峰值 7.7G，比 Qwen2-Audio 8.4G 更安全 |
 
-跑法：`python scripts/qwen2_audio_infer.py audio.wav --mode {asr,qa} [--question "..."]`
+跑法：
+```
+python scripts/qwen2_audio_infer.py audio.wav --mode {asr,qa}
+python scripts/qwen25_omni_infer.py audio.wav --mode {asr,qa}
+python scripts/streaming_compare.py audio.wav   # 生成对比图
+```
 
 ## 其它可扩展方向
 
