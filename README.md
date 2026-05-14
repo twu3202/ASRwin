@@ -20,6 +20,40 @@
 
 ---
 
+## 核心结论 (10 条 take-aways)
+
+> 把整个项目从 0 搭到 5 个 commit 完整跑出来后，这些是值得记住的东西。
+
+**1. 硬件兼容性比想象的好。** RTX 5060 Ti (Blackwell sm_120, 2026 主流卡) 一开始让人担心整个 PyTorch / k2 / bnb / vLLM 生态会塌一片。实测 PyTorch 2.11+cu128 包含 sm_120 kernel，bitsandbytes 0.49 的 4-bit NF4 kernel 也跑通了。**没有任何源码编译。**
+
+**2. 流式 ASR 已经是解决了的问题。** sherpa-onnx + Zipformer streaming 直接 `pip install`，CPU 4 线程 RTF 0.05（20× 实时），AISHELL CER 4.11% / LibriSpeech WER 3.24%，两项都跟论文差 <0.5%，复现非常干净。
+
+**3. MoChA 时代过去了。** 用户问 MoChA 时我们换成了现代 streaming Transducer (Zipformer)。MoChA (2017) 的单调注意力被 chunked attention + 卷积下采样彻底取代。今后再有人提 MoChA 当默认基线，要警惕。
+
+**4. Speech LLM 不一定比专用 ASR 准。** Qwen2-Audio-7B 在 AISHELL 同 500 utts 上 CER **5.86%，输给** 234M 的 sherpa-onnx (4.11%)。原因：LLM 转写时偶尔会"理解"内容加解释或翻译，扣分。**7B 不自动 > 234M。**
+
+**5. 但**新一代 Omni 翻盘了。 Qwen2.5-Omni-7B 同 500 utts 上 CER **1.57%**——把 sherpa-onnx 的 4.11% **降 62%**。一代 LLM 的进步（Audio→Omni）比 30× 参数差的影响还大。
+
+**6. LLM 路线不适合做真流式 ASR。** Task C 实验：把 Qwen 用 growing-window 模拟流式（每秒重 forward 一次），输出在中英文之间跳、Friday→Wednesday→Saturday 来回改。**sherpa-onnx 的 monotone streaming 是它独有的护城河。**
+
+**7. 8GB 是 7B 4-bit 的硬边界。** Qwen2-Audio 4-bit 峰值 8401 MiB（超 8GB，靠 shared memory 兜底），Qwen2.5-Omni 4-bit 峰值 7707 MiB（更紧凑反而更稳）。再大就装不下。
+
+**8. WSL2 是 Windows 上跑 ML 的甜点。** apt 装系统包、Linux 工具链统一、`/mnt/d/` 直接读 Windows 盘。唯一坑是 NTFS 不支持 chmod，所有 `Operation not permitted` warning 都可以忽略。
+
+**9. Speech LLM 的 QA 模式能修正自己的 ASR 错误。** 同一段音频，让 Qwen2-Audio 转写得到 "today is 周六"（错），让它"解释这段在说什么"反而得到 "today is Tuesday"（对，靠 Monday→?→Wednesday 的语义推理）。传统 ASR 没这能力。
+
+**10. 何时该用哪个，按业务约束决定：**
+
+| 你的需求 | 选什么 |
+|---|---|
+| 实时字幕、对话首字 <1s | sherpa-onnx Zipformer (流式, CPU) |
+| 离线最高精度中文转写 | Qwen2.5-Omni 4-bit (GPU) |
+| 语音问答 / 翻译 / 多语种理解 | Qwen2-Audio 或 Omni (GPU) |
+| 边缘部署 / 无 GPU | sherpa-onnx (CPU 够) |
+| 8GB 卡跑 LLM 最稳 | Omni 4-bit（VRAM 比 Audio 低 700 MiB） |
+
+---
+
 ## 目录
 
 - [背景与目标](#背景与目标)
@@ -43,12 +77,13 @@
 
 | 项 | 配置 | 备注 |
 |---|---|---|
-| GPU | **RTX 5060 Ti 8GB (Blackwell, sm_120)** | 需 CUDA ≥ 12.8 / PyTorch ≥ 2.7 — 但本项目走 ONNX，**用不上 CUDA** |
+| GPU | **RTX 5060 Ti 8GB (Blackwell, sm_120)** | 流式 ASR 路线 CPU 即可；speech LLM 路线需 CUDA 12.8 + PyTorch 2.11 + bnb 0.49 |
 | OS | Windows 11 26100 (24H2) | |
-| 运行环境 | WSL2 Ubuntu 22.04 + conda env `asr` (Python 3.10) | |
-| 推理框架 | sherpa-onnx 1.13.1 (CPU onnxruntime) | |
-| 评测库 | jiwer (WER/CER)，matplotlib (plots) | |
-| 模型 | `csukuangfj/sherpa-onnx-streaming-zipformer-*` (HuggingFace, hf-mirror.com 中转) | |
+| 两套 conda env | `asr` (sherpa-onnx, CPU) + `speechllm` (Qwen2-Audio/Omni, GPU) | 完全隔离 |
+| 流式 ASR 栈 | sherpa-onnx 1.13.1 + onnxruntime (CPU) | |
+| Speech LLM 栈 | PyTorch 2.11+cu128, transformers 5.8.1, bitsandbytes 0.49.2 | sm_120 kernel 全部包含 |
+| 评测库 | jiwer (WER/CER)，matplotlib + Noto CJK 字体 | |
+| 模型 | `csukuangfj/sherpa-onnx-streaming-zipformer-*`, `Qwen/Qwen2-Audio-7B-Instruct`, `Qwen/Qwen2.5-Omni-7B` | 走 hf-mirror.com |
 
 ## 方案选型与权衡
 
@@ -69,10 +104,17 @@ wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O mc
 bash mc.sh -b -p $HOME/miniconda3
 $HOME/miniconda3/bin/conda init bash && source ~/.bashrc
 
-# asr env
+# asr env — 流式 ASR 路线 (CPU)
 conda create -n asr python=3.10 -y && conda activate asr
 pip install sherpa-onnx onnxruntime soundfile numpy jiwer tqdm matplotlib pandas huggingface_hub
 sudo apt install -y build-essential cmake git ffmpeg sox libsox-fmt-all
+
+# speechllm env — Qwen2-Audio / Qwen2.5-Omni 4-bit 推理 (GPU, 可选)
+conda create -n speechllm python=3.10 -y && conda activate speechllm
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip install transformers accelerate bitsandbytes librosa soundfile huggingface_hub jiwer matplotlib
+# 验证 sm_120
+python -c "import torch; print(torch.cuda.get_device_capability(0))"  # (12, 0) = Blackwell
 ```
 
 ### 2. 下模型（国内走 hf-mirror）
@@ -230,8 +272,8 @@ ASRwin/
 
 **关键发现**：
 - Qwen2-Audio 跟 sherpa-onnx 在纯 CER 上**输了**——一句话总结"speech LLM 不一定比专用 ASR 准"
-- 但 **Qwen2.5-Omni 翻盘了**——新一代多模态 LLM 在 ASR 子任务上把 sherpa-onnx **杀了 60%**
-- 代价是 RTF 0.27 (vs 0.05) + 21GB 磁盘 + 7.7GB VRAM + 没流式
+- 但 **Qwen2.5-Omni 翻盘了**——新一代多模态 LLM 在 ASR 子任务上把 sherpa-onnx **杀了 62%**
+- 代价是 RTF 0.26 (vs 0.05) + 21GB 磁盘 + 7.7GB VRAM + 没流式
 
 ![Per-utt scatter](plots/llm_vs_streaming_per_utt.png)
 
@@ -297,7 +339,7 @@ Qwen2.5-Omni 4-bit (GPU, QA mode):
 | 场景 | 推荐 | 理由 |
 |---|---|---|
 | 实时字幕 / 流式对话 / 边缘部署 | sherpa-onnx Zipformer | 唯一真流式，CPU 跑得动，<1s 首字 |
-| 离线最高精度中文转写 | Qwen2.5-Omni 4-bit | CER 1.64% 远超专用 ASR |
+| 离线最高精度中文转写 | Qwen2.5-Omni 4-bit | CER 1.57% 远超专用 ASR |
 | 语音问答 / 翻译 / 多语种理解 | Qwen2-Audio / Omni | 能"思考"内容 |
 | 8GB 卡跑 LLM 不 OOM | Qwen2.5-Omni 4-bit | 峰值 7.7G 比 Qwen2-Audio 8.4G 更安全 |
 | 一站式 ASR + TTS 闭环 | Qwen2.5-Omni | 内置 token2wav 语音生成头 |
